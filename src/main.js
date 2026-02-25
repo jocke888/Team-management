@@ -4,7 +4,7 @@ import { getFirestore, doc, onSnapshot, setDoc, collection, addDoc, getDocs, que
 
 // ======= Firebase Config =======
 const firebaseConfig = {
-    apiKey: "AIzaSyDFmHUwnl_tPRcUPS3bsOgYyo-mhBA1WbA",
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: "team-management-dbd94.firebaseapp.com",
     projectId: "team-management-dbd94",
     storageBucket: "team-management-dbd94.firebasestorage.app",
