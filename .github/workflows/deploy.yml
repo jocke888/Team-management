@@ -26,6 +26,8 @@ jobs:
         run: npm install
       - name: Bygg appen
         run: npm run build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
       - name: Ladda upp filer
         uses: actions/upload-pages-artifact@v3
         with:
