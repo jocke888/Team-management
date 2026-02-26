@@ -3,6 +3,7 @@ import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from
 import { getFirestore, doc, onSnapshot, setDoc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // ======= Firebase Config =======
+console.log("Nyckel-test:", import.meta.env.VITE_FIREBASE_API_KEY);
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: "team-management-dbd94.firebaseapp.com",
@@ -263,12 +264,24 @@ function applyFilters() {
     document.querySelectorAll('.team').forEach(t => {
         const tMatch = activeTeamFilters.size === 0 || activeTeamFilters.has(t.dataset.name);
         let visibleInTeam = 0;
+        
         t.querySelectorAll('.member').forEach(m => {
-            const mRoles = JSON.parse(m.dataset.roles);
+            let mRoles = [];
+            try {
+                // Vi lägger till ett skydd ifall dataset.roles är tomt eller trasigt [cite: 2026-02-03]
+                mRoles = JSON.parse(m.dataset.roles || '[]');
+            } catch(e) {
+                console.warn("Kunde inte tolka roller för:", m.innerText, e); 
+            }
+            
             const rMatch = activeRoleFilters.size === 0 || mRoles.some(r => activeRoleFilters.has(canonicalRole(r)));
+            
+            // Här läggs klassen till som ska dölja elementet [cite: 2026-02-03]
             m.classList.toggle('hidden-by-filter', !(tMatch && rMatch));
+            
             if (tMatch && rMatch) visibleInTeam++;
         });
+        
         t.classList.toggle('hidden-team', !tMatch || (activeRoleFilters.size > 0 && visibleInTeam === 0));
     });
 }
@@ -287,19 +300,20 @@ function updateLegend() {
     const roleFiltersEl = document.getElementById('roleFilters');
     if (roleFiltersEl) {
         roleFiltersEl.innerHTML = Object.keys(rolesCount).map(r => `
-            <div class="legend-item" onclick="window.toggleRoleFilter('${r}')">
-                <input type="checkbox" ${activeRoleFilters.has(r) ? 'checked' : ''} onclick="event.stopPropagation()">
+            <label class="legend-item">
+                <input type="checkbox" ${activeRoleFilters.has(r) ? 'checked' : ''} onchange="window.toggleRoleFilter('${r}')">
                 <div class="swatch" style="background:${getColor(r)}"></div>
                 <span>${r} (${rolesCount[r]})</span>
-            </div>`).join('');
+            </label>`).join('');
     }
 
     const teamFiltersEl = document.getElementById('teamFilters');
     if (teamFiltersEl) {
         teamFiltersEl.innerHTML = Array.from(usedTeams).sort().map(t => `
-            <div class="legend-item" onclick="window.toggleTeamFilter('${t}')">
-                <input type="checkbox" ${activeTeamFilters.has(t) ? 'checked' : ''} onclick="event.stopPropagation()"><span>${t}</span>
-            </div>`).join('');
+            <label class="legend-item">
+                <input type="checkbox" ${activeTeamFilters.has(t) ? 'checked' : ''} onchange="window.toggleTeamFilter('${t}')">
+                <span>${t}</span>
+            </label>`).join('');
     }
     
     document.getElementById('legendTotal').innerText = `Totalt: ${document.querySelectorAll('.member').length} personer`;
