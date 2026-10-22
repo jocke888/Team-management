@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
-import { getFirestore, doc, onSnapshot, setDoc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+import { getFirestore, doc, onSnapshot, setDoc, collection, addDoc, getDocs, getDoc, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // ======= Firebase Config =======
 console.log("Nyckel-test:", import.meta.env.VITE_FIREBASE_API_KEY);
@@ -35,6 +35,9 @@ let unsubscribeLive = null;
 let currentEditingMemberId = null;
 let currentUid = null;
 let boardReady = false;
+let legacyMigration = null;
+
+const LEGACY_BOARD_EMAIL = 'webb@app.syd';
 
 function boardRef(uid = currentUid) {
     return doc(db, 'users', uid, 'boards', 'live');
@@ -76,7 +79,7 @@ window.addEventListener('DOMContentLoaded', () => {
         stopLiveSync();
         clearBoardView();
         currentUid = user ? user.uid : null;
-        if (user) startLiveSync(user.uid);
+        if (user) startLiveSync(user.uid, user.email);
     });
     renderRoleCheckboxes('roleCheckboxContainer');
     setupEventListeners();
@@ -137,12 +140,60 @@ function getMemberBackground(roles) {
 }
 
 // ======= Firebase Sync =======
-function startLiveSync(uid) {
-    unsubscribeLive = onSnapshot(boardRef(uid), (snap) => {
+function isStarterBoard(data) {
+    const teams = data?.teams || [];
+    const members = data?.members || [];
+    if (members.length > 0) return false;
+    const starter = ['Team 1', 'Oplacerade'];
+    return teams.length === starter.length && teams.every((team, index) => team === starter[index]);
+}
+
+function migrateLegacyBoard(uid) {
+    if (!legacyMigration) {
+        legacyMigration = copyLegacyBoard(uid).catch((error) => {
+            legacyMigration = null;
+            console.error('Kunde inte flytta den gamla tavlan', error);
+            return false;
+        });
+    }
+    return legacyMigration;
+}
+
+async function copyLegacyBoard(uid) {
+    const metaRef = doc(db, 'users', uid, 'meta', 'legacy');
+    if ((await getDoc(metaRef)).exists()) return false;
+
+    const legacy = await getDoc(doc(db, 'boards', 'live'));
+    const hasContent = legacy.exists() && !isStarterBoard(legacy.data());
+    if (hasContent) await setDoc(boardRef(uid), legacy.data());
+
+    const existingSnaps = await getDocs(snapshotsRef(uid));
+    if (existingSnaps.empty) {
+        const legacySnaps = await getDocs(collection(db, 'snapshots'));
+        for (const snap of legacySnaps.docs) {
+            await addDoc(snapshotsRef(uid), snap.data());
+        }
+    }
+
+    await setDoc(metaRef, { migratedAt: serverTimestamp() });
+    return hasContent;
+}
+
+function startLiveSync(uid, email) {
+    unsubscribeLive = onSnapshot(boardRef(uid), async (snap) => {
         if (currentUid !== uid) return;
         if (snap.metadata.hasPendingWrites) return;
+
+        const data = snap.exists() ? snap.data() : null;
+        const ownsLegacyBoard = (email || '').toLowerCase() === LEGACY_BOARD_EMAIL;
+        if (ownsLegacyBoard && (!data || isStarterBoard(data))) {
+            const migrated = await migrateLegacyBoard(uid);
+            if (currentUid !== uid) return;
+            if (migrated) return;
+        }
+
         if (snap.exists()) {
-            render(snap.data());
+            render(data);
             boardReady = true;
         } else {
             setDoc(boardRef(uid), { teams: ["Team 1", "Oplacerade"], members: [] });
