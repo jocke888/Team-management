@@ -33,13 +33,50 @@ let activeRoleFilters = new Set();
 let activeTeamFilters = new Set();
 let unsubscribeLive = null;
 let currentEditingMemberId = null;
+let currentUid = null;
+let boardReady = false;
+
+function boardRef(uid = currentUid) {
+    return doc(db, 'users', uid, 'boards', 'live');
+}
+
+function snapshotsRef(uid = currentUid) {
+    return collection(db, 'users', uid, 'snapshots');
+}
+
+function stopLiveSync() {
+    if (unsubscribeLive) {
+        unsubscribeLive();
+        unsubscribeLive = null;
+    }
+    boardReady = false;
+}
+
+function clearBoardView() {
+    const container = document.getElementById('teams');
+    if (container) container.innerHTML = '';
+    usedTeams.clear();
+    activeRoleFilters.clear();
+    activeTeamFilters.clear();
+    currentEditingMemberId = null;
+    updateTeamSelect();
+    updateLegend();
+}
 
 // ======= Start =======
 window.addEventListener('DOMContentLoaded', () => {
     onAuthStateChanged(auth, (user) => {
         document.getElementById('loginOverlay').style.display = user ? 'none' : 'flex';
         document.getElementById('appContainer').style.display = user ? 'block' : 'none';
-        if (user) startLiveSync();
+        document.getElementById('snapshotsOverlay').style.display = 'none';
+        document.getElementById('editMemberOverlay').style.display = 'none';
+        document.getElementById('loginError').style.display = 'none';
+        document.getElementById('currentUserLabel').textContent = user?.email || '';
+
+        stopLiveSync();
+        clearBoardView();
+        currentUid = user ? user.uid : null;
+        if (user) startLiveSync(user.uid);
     });
     renderRoleCheckboxes('roleCheckboxContainer');
     setupEventListeners();
@@ -100,15 +137,21 @@ function getMemberBackground(roles) {
 }
 
 // ======= Firebase Sync =======
-function startLiveSync() {
-    unsubscribeLive = onSnapshot(doc(db, 'boards', 'live'), (snap) => {
+function startLiveSync(uid) {
+    unsubscribeLive = onSnapshot(boardRef(uid), (snap) => {
+        if (currentUid !== uid) return;
         if (snap.metadata.hasPendingWrites) return;
-        if (snap.exists()) render(snap.data());
-        else setDoc(doc(db, 'boards', 'live'), { teams: ["Team 1", "Oplacerade"], members: [] });
+        if (snap.exists()) {
+            render(snap.data());
+            boardReady = true;
+        } else {
+            setDoc(boardRef(uid), { teams: ["Team 1", "Oplacerade"], members: [] });
+        }
     });
 }
 
 function triggerSave() {
+    if (!currentUid || !boardReady) return;
     const teams = Array.from(document.querySelectorAll('.team')).map(t => t.dataset.name);
     const members = Array.from(document.querySelectorAll('.member')).map(m => {
         let roles;
@@ -125,7 +168,7 @@ function triggerSave() {
             team: m.closest('.team').dataset.name
         };
     });
-    setDoc(doc(db, 'boards', 'live'), { teams, members });
+    setDoc(boardRef(), { teams, members });
 }
 
 // ======= Rendering =======
@@ -338,21 +381,31 @@ function sortTeams() {
 
 // ======= Snapshot & CSV =======
 async function saveSnap() {
+    const uid = currentUid;
+    if (!uid || !boardReady) return;
     const name = document.getElementById('newSnapshotName').value;
     if(!name) return;
     const teams = Array.from(document.querySelectorAll('.team')).map(t => t.dataset.name);
     const members = Array.from(document.querySelectorAll('.member')).map(m => ({
         id: m.id, name: m.dataset.name, roles: JSON.parse(m.dataset.roles), type: m.dataset.type, team: m.closest('.team').dataset.name
     }));
-    await addDoc(collection(db, "snapshots"), { name, boardData: { teams, members }, createdAt: serverTimestamp() });
-    document.getElementById('newSnapshotName').value = ''; loadSnaps();
+    await addDoc(snapshotsRef(uid), { name, boardData: { teams, members }, createdAt: serverTimestamp() });
+    if (currentUid !== uid) return;
+    document.getElementById('newSnapshotName').value = '';
+    loadSnaps();
 }
 
 async function loadSnaps() {
+    const uid = currentUid;
     document.getElementById('snapshotsOverlay').style.display = 'flex';
     const list = document.getElementById('snapshotList');
+    if (!uid) {
+        list.innerHTML = 'Inga snapshots.';
+        return;
+    }
     list.innerHTML = 'Laddar...';
-    const snaps = await getDocs(query(collection(db, "snapshots"), orderBy("createdAt", "desc")));
+    const snaps = await getDocs(query(snapshotsRef(uid), orderBy("createdAt", "desc")));
+    if (currentUid !== uid) return;
     list.innerHTML = snaps.empty ? 'Inga snapshots.' : '';
     snaps.forEach(d => {
         const s = d.data();
@@ -364,17 +417,28 @@ async function loadSnaps() {
 }
 
 window.activateSnap = async (id) => {
-    const snaps = await getDocs(collection(db, "snapshots"));
+    const uid = currentUid;
+    if (!uid) return;
+    const snaps = await getDocs(snapshotsRef(uid));
+    if (currentUid !== uid) return;
     const s = snaps.docs.find(d => d.id === id);
     if(s) { 
         if(confirm(`Vill du ladda "${s.data().name}"? Detta skriver över nuvarande vy.`)) {
-            setDoc(doc(db, 'boards', 'live'), s.data().boardData); 
+            if (currentUid !== uid) return;
+            setDoc(boardRef(uid), s.data().boardData); 
             document.getElementById('snapshotsOverlay').style.display = 'none'; 
         }
     }
 };
 
-window.delSnap = async (id) => { if(confirm("Radera denna snapshot?")) { await deleteDoc(doc(db, "snapshots", id)); loadSnaps(); } };
+window.delSnap = async (id) => {
+    const uid = currentUid;
+    if (!uid) return;
+    if (confirm("Radera denna snapshot?")) {
+        await deleteDoc(doc(db, "users", uid, "snapshots", id));
+        if (currentUid === uid) loadSnaps();
+    }
+};
 
 function exportCSV() {
     const members = Array.from(document.querySelectorAll('.member')).map(m => 
@@ -387,9 +451,11 @@ function exportCSV() {
 }
 
 function importCSV(e) {
+    const uid = currentUid;
     const f = e.target.files[0];
     const r = new FileReader();
     r.onload = async (ev) => {
+        if (!uid || currentUid !== uid) return;
         const lines = ev.target.result.split(/\r?\n/).slice(1);
         const members = lines.filter(l => l.trim()).map(l => {
             const p = l.split(/[;,]/).map(s => s.trim().replace(/"/g, ''));
@@ -397,8 +463,8 @@ function importCSV(e) {
             return { id: 'im-'+Math.random().toString(36).substr(2,5), name: p[0], roles, type: p[2]||'anställd', team: p[3]||'Oplacerade' };
         });
         const teams = [...new Set(members.map(m => m.team))];
-        await addDoc(collection(db, "snapshots"), { name: 'Import: ' + f.name, boardData: { teams, members }, createdAt: serverTimestamp() });
-        loadSnaps();
+        await addDoc(snapshotsRef(uid), { name: 'Import: ' + f.name, boardData: { teams, members }, createdAt: serverTimestamp() });
+        if (currentUid === uid) loadSnaps();
     };
     r.readAsText(f);
     e.target.value = '';

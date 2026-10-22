@@ -11,7 +11,7 @@
 <div id="loginOverlay" class="fullscreen-overlay">
     <div class="modal-card">
         <h2>Logga in</h2>
-        <p style="color: var(--text-muted); font-size: 14px;">Ange teamets lösenord.</p>
+        <p style="color: var(--text-muted); font-size: 14px;">Varje konto har en egen tavla.</p>
         <div style="display:flex; flex-direction:column; gap:12px; margin-top: 20px;">
             <input type="email" id="loginEmail" placeholder="E-post">
             <input type="password" id="loginPassword" placeholder="Lösenord">
@@ -28,6 +28,7 @@
         </div>
         <div class="control-group">
             <button class="secondary" id="sortTeamsBtn">Sortera Team</button>
+            <span id="currentUserLabel" style="color: var(--text-muted); font-size: 14px;"></span>
             <button class="secondary" id="logoutBtn">Logga ut</button>
         </div>
     </header>
