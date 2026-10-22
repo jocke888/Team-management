@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 import { getFirestore, doc, onSnapshot, setDoc, collection, addDoc, getDocs, getDoc, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
 // ======= Firebase Config =======
@@ -75,6 +75,7 @@ window.addEventListener('DOMContentLoaded', () => {
         document.getElementById('editMemberOverlay').style.display = 'none';
         document.getElementById('loginError').style.display = 'none';
         document.getElementById('currentUserLabel').textContent = user?.email || '';
+        if (!user) setLoginMode('signin');
 
         stopLiveSync();
         clearBoardView();
@@ -85,11 +86,81 @@ window.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
 });
 
+let loginMode = 'signin';
+
+function setLoginMode(mode) {
+    loginMode = mode;
+    const creating = mode === 'signup';
+    document.getElementById('loginTitle').textContent = creating ? 'Skapa konto' : 'Logga in';
+    document.getElementById('loginSubtitle').textContent = creating
+        ? 'Kontot får en egen tom tavla.'
+        : 'Varje konto har en egen tavla.';
+    const confirmPassword = document.getElementById('loginPasswordConfirm');
+    confirmPassword.style.display = creating ? 'block' : 'none';
+    if (!creating) confirmPassword.value = '';
+    document.getElementById('loginPassword').autocomplete = creating ? 'new-password' : 'current-password';
+    document.getElementById('loginBtn').textContent = creating ? 'Skapa konto' : 'Logga in';
+    document.getElementById('loginModeBtn').textContent = creating ? 'Har du redan ett konto? Logga in' : 'Skapa konto';
+    document.getElementById('loginError').style.display = 'none';
+}
+
+function showLoginError(message) {
+    const errorEl = document.getElementById('loginError');
+    errorEl.textContent = message;
+    errorEl.style.display = 'block';
+}
+
+function authErrorMessage(error, creating) {
+    switch (error?.code) {
+        case 'auth/email-already-in-use':
+            return 'Det finns redan ett konto med den e-postadressen.';
+        case 'auth/invalid-email':
+            return 'Ogiltig e-postadress.';
+        case 'auth/weak-password':
+            return 'Lösenordet måste vara minst 6 tecken.';
+        case 'auth/invalid-credential':
+        case 'auth/wrong-password':
+        case 'auth/user-not-found':
+            return 'Fel e-post eller lösenord.';
+        case 'auth/too-many-requests':
+            return 'För många försök. Vänta en stund och prova igen.';
+        default:
+            return creating ? 'Kunde inte skapa kontot.' : 'Fel inloggning.';
+    }
+}
+
+function submitLogin() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    document.getElementById('loginError').style.display = 'none';
+    if (!email || !password) {
+        showLoginError('Fyll i e-post och lösenord.');
+        return;
+    }
+
+    if (loginMode === 'signup') {
+        const confirmPassword = document.getElementById('loginPasswordConfirm').value;
+        if (password !== confirmPassword) {
+            showLoginError('Lösenorden matchar inte.');
+            return;
+        }
+        createUserWithEmailAndPassword(auth, email, password)
+            .catch((error) => showLoginError(authErrorMessage(error, true)));
+        return;
+    }
+
+    signInWithEmailAndPassword(auth, email, password)
+        .catch((error) => showLoginError(authErrorMessage(error, false)));
+}
+
 function setupEventListeners() {
-    document.getElementById('loginBtn').onclick = () => {
-        signInWithEmailAndPassword(auth, document.getElementById('loginEmail').value, document.getElementById('loginPassword').value)
-            .catch(() => document.getElementById('loginError').style.display = 'block');
-    };
+    document.getElementById('loginBtn').onclick = submitLogin;
+    document.getElementById('loginModeBtn').onclick = () => setLoginMode(loginMode === 'signin' ? 'signup' : 'signin');
+    ['loginEmail', 'loginPassword', 'loginPasswordConfirm'].forEach((id) => {
+        document.getElementById(id).addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') submitLogin();
+        });
+    });
     document.getElementById('logoutBtn').onclick = () => signOut(auth);
     document.getElementById('snapshotBtn').onclick = loadSnaps;
     document.getElementById('closeSnapshotsBtn').onclick = () => document.getElementById('snapshotsOverlay').style.display = 'none';
